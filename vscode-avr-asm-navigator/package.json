@@ -81,7 +81,7 @@
 				"avrAsmNavigator.device": {
 					"type": "string",
 					"default": "",
-					"description": "AVR® device name override (example: AVR64DA32). If empty, it is auto-detected from .vscode/*.mplab.json and then inferred from the active DFP."
+					"description": "AVR® device name override (examples: AVR128DA32, ATmega4809). If empty, it is auto-detected from .vscode/*.mplab.json, then inferred from workspace source hints, then inferred from the active DFP."
 				},
 				"avrAsmNavigator.autoDetectMplabProject": {
 					"type": "boolean",
@@ -100,12 +100,17 @@
 					"default": 200,
 					"minimum": 20,
 					"maximum": 2000,
-					"description": "Maximum completion items returned for project/pack symbols."
+					"description": "Maximum completion items returned for local symbols, AVR instructions, and active-target pack symbols."
 				},
 				"avrAsmNavigator.enableCompletion": {
 					"type": "boolean",
 					"default": true,
-					"description": "Enable completion items from local labels and active-target pack symbols."
+					"description": "Enable completion items from local labels, AVR instructions, and active-target pack symbols."
+				},
+				"avrAsmNavigator.enableInstructionCompletion": {
+					"type": "boolean",
+					"default": true,
+					"description": "Enable built-in AVR instruction mnemonic completion items."
 				},
 				"avrAsmNavigator.enableReferences": {
 					"type": "boolean",

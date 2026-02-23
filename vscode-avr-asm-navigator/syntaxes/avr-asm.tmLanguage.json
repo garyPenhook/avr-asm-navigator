@@ -4,10 +4,13 @@
   "scopeName": "source.avr-asm",
   "patterns": [
     {
-      "include": "#comments"
+      "include": "#preprocessor"
     },
     {
-      "include": "#preprocessor"
+      "include": "#strings"
+    },
+    {
+      "include": "#comments"
     },
     {
       "include": "#labels"
@@ -22,10 +25,13 @@
       "include": "#instructions"
     },
     {
-      "include": "#numbers"
+      "include": "#builtinFunctions"
     },
     {
-      "include": "#strings"
+      "include": "#operators"
+    },
+    {
+      "include": "#numbers"
     }
   ],
   "repository": {
@@ -50,7 +56,21 @@
       "patterns": [
         {
           "name": "meta.preprocessor.avr-asm",
-          "match": "^\\s*#\\s*(?:include|define|if|ifdef|ifndef|elif|else|endif|error|warning|pragma)\\b.*$"
+          "begin": "^\\s*#\\s*(include|define|undef|if|ifdef|ifndef|elif|else|endif|error|warning|pragma|line)\\b",
+          "beginCaptures": {
+            "1": {
+              "name": "keyword.control.preprocessor.avr-asm"
+            }
+          },
+          "end": "$",
+          "patterns": [
+            {
+              "include": "#strings"
+            },
+            {
+              "include": "#numbers"
+            }
+          ]
         }
       ]
     },
@@ -59,6 +79,10 @@
         {
           "name": "entity.name.label.avr-asm",
           "match": "^\\s*([A-Za-z_.$][A-Za-z0-9_.$]*)\\s*:"
+        },
+        {
+          "name": "entity.name.label.local.numeric.avr-asm",
+          "match": "^\\s*(\\d+)\\s*:"
         }
       ]
     },
@@ -66,7 +90,19 @@
       "patterns": [
         {
           "name": "keyword.control.directive.avr-asm",
-          "match": "(?i)\\.(?:global|globl|extern|section|text|data|bss|byte|word|long|ascii|asciz|equ|set|org|align|macro|endm|type|size)\\b"
+          "match": "(?i)\\.(?:align|ascii|asciz|balign|bss|byte|cseg|data|def|device|dseg|else|elseif|endfunc|endif|endm|endr|equ|equiv|eseg|extern|file|fill|func|global|globl|if|ifb|ifc|ifdef|ifeq|ifge|ifgt|ifle|iflt|ifnb|ifnc|ifndef|ifne|incbin|include|irp|irpc|lcomm|line|list|long|macro|nolist|org|p2align|popsection|pushsection|quad|rept|section|set|size|skip|space|string|subsection|text|type|weak|word|zero)\\b"
+        },
+        {
+          "name": "meta.definition.constant.avr-asm",
+          "match": "(?i)^\\s*\\.(equ|equiv|set|def)\\s+([A-Za-z_.$][A-Za-z0-9_.$]*)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.control.directive.avr-asm"
+            },
+            "2": {
+              "name": "entity.name.constant.avr-asm"
+            }
+          }
         }
       ]
     },
@@ -74,7 +110,7 @@
       "patterns": [
         {
           "name": "variable.language.register.avr-asm",
-          "match": "(?i)\\b(?:r[0-9]|r[1-2][0-9]|r3[0-1]|x|y|z)\\b"
+          "match": "(?i)\\b(?:r(?:[0-9]|[1-2][0-9]|3[0-1])|x|y|z|xl|xh|yl|yh|zl|zh)\\b"
         }
       ]
     },
@@ -82,12 +118,32 @@
       "patterns": [
         {
           "name": "keyword.other.instruction.avr-asm",
-          "match": "(?i)\\b(?:adc|add|adiw|and|andi|asr|bclr|bld|brbc|brbs|brcc|brcs|break|breq|brge|brhc|brhs|brid|brie|brlo|brlt|brmi|brne|brpl|brsh|brtc|brts|brvc|brvs|bset|bst|call|cbi|cbr|clc|clh|cli|cln|clr|cls|clt|clv|clz|com|cp|cpc|cpi|cpse|dec|eicall|eijmp|elpm|eor|fmul|fmuls|fmulsu|icall|ijmp|in|inc|jmp|lac|las|lat|ld|ldd|ldi|lds|lpm|lsl|lsr|mov|movw|mul|muls|mulsu|neg|nop|or|ori|out|pop|push|rcall|ret|reti|rjmp|rol|ror|sbc|sbci|sbi|sbic|sbis|sbiw|sbr|sbrc|sbrs|sec|seh|sei|sen|ser|ses|set|sev|sez|sleep|spm|st|std|sts|sub|subi|swap|tst|wdr|xch)\\b"
+          "match": "(?i)\\b(?:adc|add|adiw|and|andi|asr|bclr|bld|brbc|brbs|brcc|brcs|break|breq|brge|brhc|brhs|brid|brie|brlo|brlt|brmi|brne|brpl|brsh|brtc|brts|brvc|brvs|bset|bst|call|cbi|cbr|clc|clh|cli|cln|clr|cls|clt|clv|clz|com|cp|cpc|cpi|cpse|dec|des|eicall|eijmp|elpm|eor|fmul|fmuls|fmulsu|icall|ijmp|in|inc|jmp|lac|las|lat|ld|ldd|ldi|lds|lpm|lsl|lsr|mov|movw|mul|muls|mulsu|neg|nop|or|ori|out|pop|push|rcall|ret|reti|rjmp|rol|ror|sbc|sbci|sbi|sbic|sbis|sbiw|sbr|sbrc|sbrs|sec|seh|sei|sen|ser|ses|set|sev|sez|sleep|spm|st|std|sts|sub|subi|swap|tst|wdr|xch)\\b"
+        }
+      ]
+    },
+    "builtinFunctions": {
+      "patterns": [
+        {
+          "name": "support.function.builtin.avr-asm",
+          "match": "(?i)\\b(?:lo8|hi8|hh8|hlo8|hhi8|pm|gs)\\s*(?=\\()"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.arithmetic.avr-asm",
+          "match": "<<|>>|[-+*/%&|^~!]"
         }
       ]
     },
     "numbers": {
       "patterns": [
+        {
+          "name": "constant.numeric.local-label-ref.avr-asm",
+          "match": "\\b\\d+[fFbB]\\b"
+        },
         {
           "name": "constant.numeric.hex.avr-asm",
           "match": "\\b0x[0-9A-Fa-f]+\\b"
@@ -98,7 +154,7 @@
         },
         {
           "name": "constant.numeric.decimal.avr-asm",
-          "match": "\\b\\d+\\b"
+          "match": "(?<![A-Za-z0-9_.$])-?\\d+\\b"
         }
       ]
     },
@@ -114,9 +170,19 @@
               "match": "\\\\."
             }
           ]
+        },
+        {
+          "name": "string.quoted.single.avr-asm",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            {
+              "name": "constant.character.escape.avr-asm",
+              "match": "\\\\."
+            }
+          ]
         }
       ]
     }
   }
 }
-

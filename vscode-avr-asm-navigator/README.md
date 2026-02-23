@@ -57,6 +57,7 @@ If you use WSL/SSH/Container remote contexts, uninstall in that same remote cont
   - target-device DFP symbols resolved from your project
 - Go-to-definition for local labels and DFP symbols
 - Completion items from local symbols + DFP symbol index
+- Built-in completion coverage for AVR instruction mnemonics
 - Document symbols (Outline view / `Go to Symbol in Editor`)
 - Workspace symbols (`Go to Symbol in Workspace`)
 - Find References for AVR® assembly symbols across workspace files
@@ -67,12 +68,13 @@ If you use WSL/SSH/Container remote contexts, uninstall in that same remote cont
 - `avrAsmNavigator.dfpPath`
   - Optional explicit DFP root path override.
 - `avrAsmNavigator.device`
-  - Optional explicit device override (example: `AVR64DA32`).
+  - Optional explicit device override (examples: `AVR128DA32`, `ATmega4809`).
 - `avrAsmNavigator.autoDetectMplabProject`
   - When enabled (default), device + pack are auto-detected from `.vscode/*.mplab.json`.
 - `avrAsmNavigator.maxHoverResults`
 - `avrAsmNavigator.maxCompletionItems`
 - `avrAsmNavigator.enableCompletion`
+- `avrAsmNavigator.enableInstructionCompletion`
 - `avrAsmNavigator.enableReferences`
 - `avrAsmNavigator.includeDfpInWorkspaceSymbols`
 - `avrAsmNavigator.maxWorkspaceScanFiles`
@@ -82,6 +84,7 @@ If you use WSL/SSH/Container remote contexts, uninstall in that same remote cont
 ## Notes
 
 - Preferred mode is `avr-asm` (provided by this extension).
+- If no `.vscode/*.mplab.json` exists, the extension also tries to infer device from workspace source text (for example `ATmega4809`, `AVR128DA32`, `__AVR_*__`, `io*.h`, or `*def.inc` hints).
 
 ## Scope and Non-goals
 

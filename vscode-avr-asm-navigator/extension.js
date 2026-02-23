@@ -16,8 +16,159 @@ const WORKSPACE_EXCLUDE_GLOB = '**/{_build,out,cmake,node_modules,.git}/**';
 const DEFAULT_MAX_WORKSPACE_SCAN_FILES = 400;
 const DEFAULT_MAX_WORKSPACE_SYMBOLS = 300;
 const DEFAULT_MAX_REFERENCE_RESULTS = 500;
+const DEFAULT_MAX_DEVICE_INFERENCE_FILES = 60;
 
 const DEFAULT_PACK_VENDOR = 'Microchip';
+const AVR_INSTRUCTION_MNEMONICS = Object.freeze([
+  'adc',
+  'add',
+  'adiw',
+  'and',
+  'andi',
+  'asr',
+  'bclr',
+  'bld',
+  'brbc',
+  'brbs',
+  'brcc',
+  'brcs',
+  'break',
+  'breq',
+  'brge',
+  'brhc',
+  'brhs',
+  'brid',
+  'brie',
+  'brlo',
+  'brlt',
+  'brmi',
+  'brne',
+  'brpl',
+  'brsh',
+  'brtc',
+  'brts',
+  'brvc',
+  'brvs',
+  'bset',
+  'bst',
+  'call',
+  'cbi',
+  'cbr',
+  'clc',
+  'clh',
+  'cli',
+  'cln',
+  'clr',
+  'cls',
+  'clt',
+  'clv',
+  'clz',
+  'com',
+  'cp',
+  'cpc',
+  'cpi',
+  'cpse',
+  'dec',
+  'des',
+  'eicall',
+  'eijmp',
+  'elpm',
+  'eor',
+  'fmul',
+  'fmuls',
+  'fmulsu',
+  'icall',
+  'ijmp',
+  'in',
+  'inc',
+  'jmp',
+  'lac',
+  'las',
+  'lat',
+  'ld',
+  'ldd',
+  'ldi',
+  'lds',
+  'lpm',
+  'lsl',
+  'lsr',
+  'mov',
+  'movw',
+  'mul',
+  'muls',
+  'mulsu',
+  'neg',
+  'nop',
+  'or',
+  'ori',
+  'out',
+  'pop',
+  'push',
+  'rcall',
+  'ret',
+  'reti',
+  'rjmp',
+  'rol',
+  'ror',
+  'sbc',
+  'sbci',
+  'sbi',
+  'sbic',
+  'sbis',
+  'sbiw',
+  'sbr',
+  'sbrc',
+  'sbrs',
+  'sec',
+  'seh',
+  'sei',
+  'sen',
+  'ser',
+  'ses',
+  'set',
+  'sev',
+  'sez',
+  'sleep',
+  'spm',
+  'st',
+  'std',
+  'sts',
+  'sub',
+  'subi',
+  'swap',
+  'tst',
+  'wdr',
+  'xch'
+]);
+const AVR_NO_OPERAND_INSTRUCTIONS = new Set([
+  'break',
+  'clc',
+  'clh',
+  'cli',
+  'cln',
+  'cls',
+  'clt',
+  'clv',
+  'clz',
+  'eicall',
+  'eijmp',
+  'icall',
+  'ijmp',
+  'nop',
+  'ret',
+  'reti',
+  'sec',
+  'seh',
+  'sei',
+  'sen',
+  'ses',
+  'set',
+  'sev',
+  'sez',
+  'sleep',
+  'spm',
+  'wdr'
+]);
 
 let cachedIndex = null;
 let indexBuildPromise = null;
@@ -67,6 +218,160 @@ function getConfiguredDfpPath() {
 
 function getConfiguredDevice() {
   return (getConfig().get('device', '') || '').trim();
+}
+
+function normalizeGuessedDeviceName(rawDeviceName) {
+  const raw = String(rawDeviceName || '').trim();
+  if (!raw) {
+    return '';
+  }
+
+  const at90Short = /^90([0-9a-z]+)$/i.exec(raw);
+  if (at90Short) {
+    return `AT90${at90Short[1].toUpperCase()}`;
+  }
+
+  const tinyInc = /^tn([0-9][0-9a-z]*)$/i.exec(raw);
+  if (tinyInc) {
+    return `ATtiny${tinyInc[1].toUpperCase()}`;
+  }
+
+  const megaInc = /^m([0-9][0-9a-z]*)$/i.exec(raw);
+  if (megaInc) {
+    return `ATmega${megaInc[1].toUpperCase()}`;
+  }
+
+  const tiny = /^attiny([0-9][0-9a-z]*)$/i.exec(raw);
+  if (tiny) {
+    return `ATtiny${tiny[1].toUpperCase()}`;
+  }
+
+  const mega = /^atmega([0-9][0-9a-z]*)$/i.exec(raw);
+  if (mega) {
+    return `ATmega${mega[1].toUpperCase()}`;
+  }
+
+  const xmega = /^atxmega([0-9][0-9a-z]*)$/i.exec(raw);
+  if (xmega) {
+    return `ATxmega${xmega[1].toUpperCase()}`;
+  }
+
+  const tinyShort = /^tiny([0-9][0-9a-z]*)$/i.exec(raw);
+  if (tinyShort) {
+    return `ATtiny${tinyShort[1].toUpperCase()}`;
+  }
+
+  const megaShort = /^mega([0-9][0-9a-z]*)$/i.exec(raw);
+  if (megaShort) {
+    return `ATmega${megaShort[1].toUpperCase()}`;
+  }
+
+  const xmegaShort = /^xmega([0-9][0-9a-z]*)$/i.exec(raw);
+  if (xmegaShort) {
+    return `ATxmega${xmegaShort[1].toUpperCase()}`;
+  }
+
+  const avr = /^avr([0-9][0-9a-z]*)$/i.exec(raw);
+  if (avr) {
+    return `AVR${avr[1].toUpperCase()}`;
+  }
+
+  const at90 = /^at90([0-9a-z]+)$/i.exec(raw);
+  if (at90) {
+    return `AT90${at90[1].toUpperCase()}`;
+  }
+
+  const anyAtDevice = /^at([0-9a-z]+)$/i.exec(raw);
+  if (anyAtDevice) {
+    return `AT${anyAtDevice[1].toUpperCase()}`;
+  }
+
+  return raw;
+}
+
+function extractDeviceCandidatesFromText(text) {
+  const candidates = [];
+  if (!text) {
+    return candidates;
+  }
+
+  let match = null;
+  const directDeviceRegex =
+    /\b(?:AT(?:tiny|mega|xmega)[0-9][0-9A-Za-z]*|AT90[0-9A-Za-z]+|AVR[0-9][0-9A-Za-z]*)\b/g;
+  while ((match = directDeviceRegex.exec(text)) !== null) {
+    candidates.push({ device: match[0], weight: 5 });
+  }
+
+  const avrMacroRegex = /\b__AVR_([A-Za-z0-9_]+)__\b/g;
+  while ((match = avrMacroRegex.exec(text)) !== null) {
+    const macroName = match[1].replace(/_/g, '');
+    if (!/\d/.test(macroName) && !/^AT90/i.test(macroName)) {
+      continue;
+    }
+    candidates.push({ device: macroName, weight: 8 });
+  }
+
+  // Prefer explicit device include forms when present.
+  const ioIncludeRegex = /#\s*include\s*[<"]avr\/io([a-z0-9]+)\.h[>"]/gi;
+  while ((match = ioIncludeRegex.exec(text)) !== null) {
+    candidates.push({ device: match[1], weight: 12 });
+  }
+
+  const defIncRegex = /\.include\s+"([a-z0-9]+)def\.inc"/gi;
+  while ((match = defIncRegex.exec(text)) !== null) {
+    candidates.push({ device: match[1], weight: 14 });
+  }
+
+  return candidates;
+}
+
+async function inferDeviceFromWorkspaceText() {
+  const maxScanFiles = clampConfigNumber(
+    'maxWorkspaceScanFiles',
+    DEFAULT_MAX_WORKSPACE_SCAN_FILES,
+    20,
+    10000
+  );
+  const scanLimit = Math.max(1, Math.min(maxScanFiles, DEFAULT_MAX_DEVICE_INFERENCE_FILES));
+
+  const files = await getWorkspaceAssemblyFiles(scanLimit);
+  if (!files.length) {
+    return '';
+  }
+
+  const openDocs = getOpenAssemblyDocumentMap();
+  const score = new Map();
+
+  const addScore = (deviceName, weight) => {
+    const normalized = normalizeGuessedDeviceName(deviceName);
+    if (!normalized) {
+      return;
+    }
+    const current = score.get(normalized) || 0;
+    score.set(normalized, current + weight);
+  };
+
+  for (const uri of files) {
+    const text = await getTextForUri(uri, openDocs);
+    const candidates = extractDeviceCandidatesFromText(text);
+    for (const candidate of candidates) {
+      addScore(candidate.device, candidate.weight);
+    }
+  }
+
+  let bestDevice = '';
+  let bestScore = -1;
+  for (const [device, deviceScore] of score.entries()) {
+    if (
+      deviceScore > bestScore ||
+      (deviceScore === bestScore && device.localeCompare(bestDevice) < 0)
+    ) {
+      bestDevice = device;
+      bestScore = deviceScore;
+    }
+  }
+
+  return bestScore > 0 ? bestDevice : '';
 }
 
 function shouldAutoDetectMplabProject() {
@@ -383,6 +688,9 @@ async function resolveIndexFiles() {
   const packRoot = await resolvePackRoot(configuredPath, detected);
   let device = configuredDevice || (detected && detected.device) || '';
   if (!device) {
+    device = await inferDeviceFromWorkspaceText();
+  }
+  if (!device) {
     device = await detectDeviceFromPack(packRoot);
   }
   const deviceLowerName = normalizeDeviceForLookup(device);
@@ -443,6 +751,19 @@ function escapeRegex(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function startsWithIgnoreCase(value, prefix) {
+  if (!prefix) {
+    return true;
+  }
+  return String(value || '')
+    .toLowerCase()
+    .startsWith(String(prefix || '').toLowerCase());
+}
+
+function completionSeenKey(value) {
+  return String(value || '').toLowerCase();
+}
+
 function makeSymbolRange(line, column, symbol) {
   const safeColumn = Math.max(0, column);
   return new vscode.Range(
@@ -501,7 +822,7 @@ function parseSymbolsFromLine(line, kind) {
     });
   }
 
-  match = /^\s*\.equ\s+([A-Za-z_.$][A-Za-z0-9_.$]*)\s*=\s*(.+)$/.exec(line);
+  match = /^\s*\.equ\s+([A-Za-z_.$][A-Za-z0-9_.$]*)\s*=\s*(.+)$/i.exec(line);
   if (match) {
     found.push({
       symbol: match[1],
@@ -1080,7 +1401,7 @@ async function provideCompletionItems(document, position) {
 
   const localSymbols = getLocalSymbols(document);
   for (const [symbol, info] of localSymbols.entries()) {
-    if (prefix && !symbol.startsWith(prefix)) {
+    if (!startsWithIgnoreCase(symbol, prefix)) {
       continue;
     }
     const item = new vscode.CompletionItem(
@@ -1090,18 +1411,44 @@ async function provideCompletionItems(document, position) {
     item.detail = `local ${info.kind} (line ${info.line + 1})`;
     item.sortText = `0_${symbol}`;
     results.push(item);
-    seen.add(symbol);
+    seen.add(completionSeenKey(symbol));
     if (results.length >= maxItems) {
       return results;
     }
   }
 
+  if (getConfig().get('enableInstructionCompletion', true)) {
+    for (const mnemonic of AVR_INSTRUCTION_MNEMONICS) {
+      if (seen.has(completionSeenKey(mnemonic))) {
+        continue;
+      }
+      if (!startsWithIgnoreCase(mnemonic, prefix)) {
+        continue;
+      }
+
+      const item = new vscode.CompletionItem(
+        mnemonic,
+        vscode.CompletionItemKind.Keyword
+      );
+      item.detail = 'AVR instruction';
+      item.insertText = AVR_NO_OPERAND_INSTRUCTIONS.has(mnemonic)
+        ? mnemonic
+        : `${mnemonic} `;
+      item.sortText = `1_${mnemonic}`;
+      results.push(item);
+      seen.add(completionSeenKey(mnemonic));
+      if (results.length >= maxItems) {
+        return results;
+      }
+    }
+  }
+
   const index = await getDfpIndex();
   for (const symbol of index.symbolList) {
-    if (seen.has(symbol)) {
+    if (seen.has(completionSeenKey(symbol))) {
       continue;
     }
-    if (prefix && !symbol.startsWith(prefix)) {
+    if (!startsWithIgnoreCase(symbol, prefix)) {
       continue;
     }
     const first = (index.symbols.get(symbol) || [])[0];
@@ -1113,8 +1460,9 @@ async function provideCompletionItems(document, position) {
       const relPath = path.relative(index.root, first.file) || first.file;
       item.detail = `${first.kind} from ${relPath}:${first.line}`;
     }
-    item.sortText = `1_${symbol}`;
+    item.sortText = `2_${symbol}`;
     results.push(item);
+    seen.add(completionSeenKey(symbol));
     if (results.length >= maxItems) {
       break;
     }
