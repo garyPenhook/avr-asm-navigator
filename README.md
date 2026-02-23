@@ -21,6 +21,12 @@ Install the generated VSIX in VS Code:
 code --install-extension ./avr1-local.avr-asm-navigator-<version>.vsix --force
 ```
 
+Uninstall if needed:
+
+```sh
+code --uninstall-extension avr1-local.avr-asm-navigator
+```
+
 ## Documentation
 
 Full extension documentation is in:

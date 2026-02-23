@@ -28,6 +28,27 @@ Install the generated VSIX in VS Code:
 code --install-extension ./avr1-local.avr-asm-navigator-<version>.vsix --force
 ```
 
+## Uninstall
+
+If the Extensions view does not show a gear icon, use one of these:
+
+1. Command Palette:
+   - Run `Extensions: Uninstall Extension`
+   - Select `AVR® ASM Navigator`
+2. CLI:
+   ```sh
+   code --uninstall-extension avr1-local.avr-asm-navigator
+   ```
+3. Verify installed extension IDs if uninstall says "not found":
+   ```sh
+   code --list-extensions | rg -i "avr|navigator"
+   ```
+4. Last resort, delete extension folder and reload VS Code:
+   - Linux/macOS: `~/.vscode/extensions/avr1-local.avr-asm-navigator-*`
+   - Windows: `%USERPROFILE%\\.vscode\\extensions\\avr1-local.avr-asm-navigator-*`
+
+If you use WSL/SSH/Container remote contexts, uninstall in that same remote context as well.
+
 ## Features
 
 - Contributes language mode `avr-asm` for `.S` and `.s` files
