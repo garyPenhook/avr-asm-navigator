@@ -17,6 +17,15 @@ const DEFAULT_MAX_WORKSPACE_SCAN_FILES = 400;
 const DEFAULT_MAX_WORKSPACE_SYMBOLS = 300;
 const DEFAULT_MAX_REFERENCE_RESULTS = 500;
 const DEFAULT_MAX_DEVICE_INFERENCE_FILES = 60;
+const INDEX_SCOPE_GLOBAL = '__global__';
+const OUTPUT_CHANNEL_NAME = 'AVR ASM Navigator';
+const SUPPORTED_LANGUAGE_IDS = new Set([
+  'avr-asm',
+  'nasm',
+  'asm',
+  'assembly',
+  'gas'
+]);
 
 const DEFAULT_PACK_VENDOR = 'Microchip';
 const AVR_INSTRUCTION_MNEMONICS = Object.freeze([
@@ -170,12 +179,57 @@ const AVR_NO_OPERAND_INSTRUCTIONS = new Set([
   'wdr'
 ]);
 
-let cachedIndex = null;
-let indexBuildPromise = null;
+const cachedIndexByScope = new Map();
+const indexBuildPromiseByScope = new Map();
 const localSymbolCache = new Map();
+let outputChannel = null;
 
 function getConfig() {
   return vscode.workspace.getConfiguration('avrAsmNavigator');
+}
+
+function getOutputChannel() {
+  if (!outputChannel) {
+    outputChannel = vscode.window.createOutputChannel(OUTPUT_CHANNEL_NAME);
+  }
+  return outputChannel;
+}
+
+function logOutput(level, message) {
+  const channel = getOutputChannel();
+  channel.appendLine(
+    `[${new Date().toISOString()}] [${level}] ${String(message || '')}`
+  );
+}
+
+function logInfo(message) {
+  logOutput('info', message);
+}
+
+function logWarn(message) {
+  logOutput('warn', message);
+}
+
+function logError(message, error = null) {
+  if (error && error.message) {
+    logOutput('error', `${message}: ${error.message}`);
+    return;
+  }
+  logOutput('error', message);
+}
+
+function isCancelled(token) {
+  return Boolean(token && token.isCancellationRequested);
+}
+
+function scopeLabel(scope) {
+  if (!scope) {
+    return INDEX_SCOPE_GLOBAL;
+  }
+  if (scope.workspaceFolder) {
+    return scope.workspaceFolder.name || scope.workspaceFolder.uri.toString();
+  }
+  return scope.key || INDEX_SCOPE_GLOBAL;
 }
 
 async function fileExists(filePath) {
@@ -209,6 +263,123 @@ async function readTextIfExists(filePath) {
     return await fs.readFile(filePath, 'utf8');
   } catch {
     return null;
+  }
+}
+
+async function listDirUriSafe(directoryUri) {
+  try {
+    return (await vscode.workspace.fs.readDirectory(directoryUri)).map(
+      ([name]) => name
+    );
+  } catch {
+    return [];
+  }
+}
+
+async function readTextUriIfExists(uri) {
+  try {
+    const bytes = await vscode.workspace.fs.readFile(uri);
+    return Buffer.from(bytes).toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
+function getUriExtension(uri) {
+  if (!uri) {
+    return '';
+  }
+  return path.extname(uri.path || uri.fsPath || '').toLowerCase();
+}
+
+function isAssemblyFilePath(filePath) {
+  const ext = path.extname(filePath || '').toLowerCase();
+  return ext === '.s' || ext === '.asm' || ext === '.as' || ext === '.inc';
+}
+
+function isAssemblyUri(uri) {
+  return isAssemblyFilePath(uri ? uri.path : '');
+}
+
+function isAssemblyDocument(document) {
+  if (!document) {
+    return false;
+  }
+  return (
+    SUPPORTED_LANGUAGE_IDS.has(document.languageId) || isAssemblyUri(document.uri)
+  );
+}
+
+function isMplabProjectUri(uri) {
+  return Boolean(uri && uri.path && uri.path.toLowerCase().endsWith('.mplab.json'));
+}
+
+function getIndexScopeForUri(uri) {
+  const workspaceFolder = uri ? vscode.workspace.getWorkspaceFolder(uri) : null;
+  if (workspaceFolder) {
+    return {
+      key: `folder:${workspaceFolder.uri.toString()}`,
+      workspaceFolder
+    };
+  }
+  return {
+    key: INDEX_SCOPE_GLOBAL,
+    workspaceFolder: null
+  };
+}
+
+function getIndexScopeForDocument(document) {
+  return getIndexScopeForUri(document ? document.uri : null);
+}
+
+function getDefaultIndexScope() {
+  const editor = vscode.window.activeTextEditor;
+  if (editor && editor.document) {
+    return getIndexScopeForDocument(editor.document);
+  }
+
+  const workspaceFolders = vscode.workspace.workspaceFolders || [];
+  if (workspaceFolders.length > 0) {
+    const first = workspaceFolders[0];
+    return {
+      key: `folder:${first.uri.toString()}`,
+      workspaceFolder: first
+    };
+  }
+
+  return {
+    key: INDEX_SCOPE_GLOBAL,
+    workspaceFolder: null
+  };
+}
+
+function getAllWorkspaceIndexScopes() {
+  const workspaceFolders = vscode.workspace.workspaceFolders || [];
+  if (workspaceFolders.length === 0) {
+    return [getDefaultIndexScope()];
+  }
+  return workspaceFolders.map((workspaceFolder) => ({
+    key: `folder:${workspaceFolder.uri.toString()}`,
+    workspaceFolder
+  }));
+}
+
+function clearIndexCache(scope = null) {
+  if (!scope) {
+    cachedIndexByScope.clear();
+    indexBuildPromiseByScope.clear();
+    return;
+  }
+  cachedIndexByScope.delete(scope.key);
+  indexBuildPromiseByScope.delete(scope.key);
+}
+
+function maybeInvalidateIndexForUri(uri) {
+  if (!uri) {
+    return;
+  }
+  if (isMplabProjectUri(uri) || isAssemblyUri(uri)) {
+    clearIndexCache(getIndexScopeForUri(uri));
   }
 }
 
@@ -325,7 +496,7 @@ function extractDeviceCandidatesFromText(text) {
   return candidates;
 }
 
-async function inferDeviceFromWorkspaceText() {
+async function inferDeviceFromWorkspaceText(scope = null) {
   const maxScanFiles = clampConfigNumber(
     'maxWorkspaceScanFiles',
     DEFAULT_MAX_WORKSPACE_SCAN_FILES,
@@ -333,13 +504,14 @@ async function inferDeviceFromWorkspaceText() {
     10000
   );
   const scanLimit = Math.max(1, Math.min(maxScanFiles, DEFAULT_MAX_DEVICE_INFERENCE_FILES));
+  const workspaceFolder = scope ? scope.workspaceFolder : null;
 
-  const files = await getWorkspaceAssemblyFiles(scanLimit);
+  const files = await getWorkspaceAssemblyFiles(scanLimit, workspaceFolder);
   if (!files.length) {
     return '';
   }
 
-  const openDocs = getOpenAssemblyDocumentMap();
+  const openDocs = getOpenAssemblyDocumentMap(workspaceFolder);
   const score = new Map();
 
   const addScore = (deviceName, weight) => {
@@ -420,18 +592,20 @@ function sortBySpecificity(fileNames) {
   });
 }
 
-async function detectMplabTarget() {
-  const workspaceFolders = vscode.workspace.workspaceFolders || [];
+async function detectMplabTarget(preferredWorkspaceFolder = null) {
+  const workspaceFolders = preferredWorkspaceFolder
+    ? [preferredWorkspaceFolder]
+    : vscode.workspace.workspaceFolders || [];
   for (const folder of workspaceFolders) {
-    const vscodeDir = path.join(folder.uri.fsPath, '.vscode');
-    const files = await listDirSafe(vscodeDir);
+    const vscodeDirUri = vscode.Uri.joinPath(folder.uri, '.vscode');
+    const files = await listDirUriSafe(vscodeDirUri);
     const mplabFiles = files
       .filter((file) => file.endsWith('.mplab.json'))
       .sort((a, b) => a.localeCompare(b));
 
     for (const file of mplabFiles) {
-      const fullPath = path.join(vscodeDir, file);
-      const jsonText = await readTextIfExists(fullPath);
+      const fullUri = vscode.Uri.joinPath(vscodeDirUri, file);
+      const jsonText = await readTextUriIfExists(fullUri);
       if (!jsonText) {
         continue;
       }
@@ -475,8 +649,8 @@ async function detectMplabTarget() {
 
       if (device || packCandidate) {
         return {
-          workspaceFolder: folder.uri.fsPath,
-          projectFile: fullPath,
+          workspaceFolder: folder.uri.toString(),
+          projectFile: fullUri.toString(),
           device: device || '',
           pack
         };
@@ -678,17 +852,17 @@ async function resolveAtdfPath(packRoot, deviceName, deviceLowerName, token) {
   return null;
 }
 
-async function resolveIndexFiles() {
+async function resolveIndexFiles(scope = null) {
   const configuredPath = getConfiguredDfpPath();
   const configuredDevice = getConfiguredDevice();
   const detected = shouldAutoDetectMplabProject()
-    ? await detectMplabTarget()
+    ? await detectMplabTarget(scope ? scope.workspaceFolder : null)
     : null;
 
   const packRoot = await resolvePackRoot(configuredPath, detected);
   let device = configuredDevice || (detected && detected.device) || '';
   if (!device) {
-    device = await inferDeviceFromWorkspaceText();
+    device = await inferDeviceFromWorkspaceText(scope);
   }
   if (!device) {
     device = await detectDeviceFromPack(packRoot);
@@ -861,8 +1035,8 @@ function parseSymbolsFromLine(line, kind) {
   return found;
 }
 
-async function buildDfpIndex() {
-  const target = await resolveIndexFiles();
+async function buildDfpIndex(scope) {
+  const target = await resolveIndexFiles(scope);
   const root = target.packRoot;
   const symbols = new Map();
   const symbolList = [];
@@ -892,8 +1066,12 @@ async function buildDfpIndex() {
   }
 
   symbolList.sort((a, b) => a.localeCompare(b));
+  logInfo(
+    `Index built for ${scopeLabel(scope)}: device=${target.device || 'unknown'}, symbols=${symbolList.length}, files=${scannedFiles.length}`
+  );
 
   return {
+    scopeKey: scope.key,
     root,
     device: target.device,
     devLibName: target.devLibName,
@@ -905,30 +1083,37 @@ async function buildDfpIndex() {
   };
 }
 
-async function getDfpIndex(force = false) {
+async function getDfpIndex(scope = null, force = false) {
+  const resolvedScope = scope || getDefaultIndexScope();
+  const scopeKey = resolvedScope.key;
+
   if (force) {
-    cachedIndex = null;
-    indexBuildPromise = null;
+    clearIndexCache(resolvedScope);
   }
 
-  if (cachedIndex) {
-    return cachedIndex;
+  if (cachedIndexByScope.has(scopeKey)) {
+    return cachedIndexByScope.get(scopeKey);
   }
 
-  if (indexBuildPromise) {
-    return indexBuildPromise;
+  if (indexBuildPromiseByScope.has(scopeKey)) {
+    return indexBuildPromiseByScope.get(scopeKey);
   }
 
-  indexBuildPromise = buildDfpIndex()
+  const buildPromise = buildDfpIndex(resolvedScope)
     .then((index) => {
-      cachedIndex = index;
+      cachedIndexByScope.set(scopeKey, index);
       return index;
     })
+    .catch((error) => {
+      logError(`Index build failed for ${scopeLabel(resolvedScope)}`, error);
+      throw error;
+    })
     .finally(() => {
-      indexBuildPromise = null;
+      indexBuildPromiseByScope.delete(scopeKey);
     });
 
-  return indexBuildPromise;
+  indexBuildPromiseByScope.set(scopeKey, buildPromise);
+  return buildPromise;
 }
 
 function parseLocalSymbolsFromLines(lines) {
@@ -1019,18 +1204,24 @@ function makeLocation(uri, lineNumber1Based) {
   return new vscode.Location(uri, position);
 }
 
-function isAssemblyFilePath(filePath) {
-  const ext = path.extname(filePath || '').toLowerCase();
-  return ext === '.s' || ext === '.asm' || ext === '.as' || ext === '.inc';
+function isUriInWorkspaceFolder(uri, workspaceFolder) {
+  if (!workspaceFolder) {
+    return true;
+  }
+  const containingFolder = vscode.workspace.getWorkspaceFolder(uri);
+  return Boolean(
+    containingFolder &&
+      containingFolder.uri.toString() === workspaceFolder.uri.toString()
+  );
 }
 
-function getOpenAssemblyDocumentMap() {
+function getOpenAssemblyDocumentMap(workspaceFolder = null) {
   const map = new Map();
   for (const document of vscode.workspace.textDocuments) {
-    if (document.uri.scheme !== 'file') {
+    if (!isAssemblyDocument(document)) {
       continue;
     }
-    if (!isAssemblyFilePath(document.uri.fsPath)) {
+    if (!isUriInWorkspaceFolder(document.uri, workspaceFolder)) {
       continue;
     }
     map.set(document.uri.toString(), document);
@@ -1038,15 +1229,16 @@ function getOpenAssemblyDocumentMap() {
   return map;
 }
 
-async function getWorkspaceAssemblyFiles(maxFiles) {
+async function getWorkspaceAssemblyFiles(maxFiles, workspaceFolder = null) {
+  const includePattern = workspaceFolder
+    ? new vscode.RelativePattern(workspaceFolder.uri, WORKSPACE_ASM_GLOB)
+    : WORKSPACE_ASM_GLOB;
   const uris = await vscode.workspace.findFiles(
-    WORKSPACE_ASM_GLOB,
+    includePattern,
     WORKSPACE_EXCLUDE_GLOB,
     maxFiles
   );
-  return uris.filter(
-    (uri) => uri.scheme === 'file' && isAssemblyFilePath(uri.fsPath)
-  );
+  return uris.filter((uri) => isAssemblyUri(uri));
 }
 
 async function getTextForUri(uri, openDocumentMap) {
@@ -1055,7 +1247,7 @@ async function getTextForUri(uri, openDocumentMap) {
     return openDocument.getText();
   }
 
-  const text = await readTextIfExists(uri.fsPath);
+  const text = await readTextUriIfExists(uri);
   return text || '';
 }
 
@@ -1123,7 +1315,11 @@ async function provideDocumentSymbols(document) {
   });
 }
 
-async function provideWorkspaceSymbols(query) {
+async function provideWorkspaceSymbols(query, token) {
+  if (isCancelled(token)) {
+    return [];
+  }
+
   const normalized = (query || '').trim().toLowerCase();
   if (!normalized) {
     return [];
@@ -1165,6 +1361,9 @@ async function provideWorkspaceSymbols(query) {
   };
 
   for (const uri of uriMap.values()) {
+    if (isCancelled(token)) {
+      return results;
+    }
     const text = await getTextForUri(uri, openDocs);
     if (!text) {
       continue;
@@ -1172,6 +1371,9 @@ async function provideWorkspaceSymbols(query) {
 
     const parsed = parseLocalSymbolsFromLines(text.split(/\r?\n/));
     for (const entry of parsed.entries) {
+      if (isCancelled(token)) {
+        return results;
+      }
       if (!entry.symbol.toLowerCase().includes(normalized)) {
         continue;
       }
@@ -1196,32 +1398,46 @@ async function provideWorkspaceSymbols(query) {
   }
 
   if (getConfig().get('includeDfpInWorkspaceSymbols', true)) {
-    const index = await getDfpIndex();
-    for (const symbol of index.symbolList) {
-      if (!symbol.toLowerCase().includes(normalized)) {
-        continue;
+    for (const scope of getAllWorkspaceIndexScopes()) {
+      if (isCancelled(token)) {
+        return results;
       }
-      const first = (index.symbols.get(symbol) || [])[0];
-      if (!first) {
+      let index = null;
+      try {
+        index = await getDfpIndex(scope);
+      } catch {
         continue;
       }
 
-      const uri = vscode.Uri.file(first.file);
-      const column = Math.max(0, (first.text || '').indexOf(symbol));
-      const location = new vscode.Location(
-        uri,
-        makeSymbolRange(Math.max(0, first.line - 1), column, symbol)
-      );
-      const symbolInfo = new vscode.SymbolInformation(
-        symbol,
-        vscode.SymbolKind.Constant,
-        `${first.kind} (${index.device || 'AVR®'} pack)`,
-        location
-      );
+      for (const symbol of index.symbolList) {
+        if (isCancelled(token)) {
+          return results;
+        }
+        if (!symbol.toLowerCase().includes(normalized)) {
+          continue;
+        }
+        const first = (index.symbols.get(symbol) || [])[0];
+        if (!first) {
+          continue;
+        }
 
-      const dedupeKey = `dfp:${first.file}:${first.line}:${symbol}`;
-      if (addSymbol(symbolInfo, dedupeKey)) {
-        break;
+        const uri = vscode.Uri.file(first.file);
+        const column = Math.max(0, (first.text || '').indexOf(symbol));
+        const location = new vscode.Location(
+          uri,
+          makeSymbolRange(Math.max(0, first.line - 1), column, symbol)
+        );
+        const symbolInfo = new vscode.SymbolInformation(
+          symbol,
+          vscode.SymbolKind.Constant,
+          `${first.kind} (${index.device || 'AVR®'} pack)`,
+          location
+        );
+
+        const dedupeKey = `dfp:${first.file}:${first.line}:${symbol}`;
+        if (addSymbol(symbolInfo, dedupeKey)) {
+          return results;
+        }
       }
     }
   }
@@ -1229,7 +1445,11 @@ async function provideWorkspaceSymbols(query) {
   return results;
 }
 
-async function provideReferences(document, position, context) {
+async function provideReferences(document, position, context, token) {
+  if (isCancelled(token)) {
+    return [];
+  }
+
   if (!getConfig().get('enableReferences', true)) {
     return [];
   }
@@ -1263,7 +1483,7 @@ async function provideReferences(document, position, context) {
   for (const openDoc of openDocs.values()) {
     uriMap.set(openDoc.uri.toString(), openDoc.uri);
   }
-  if (document.uri.scheme === 'file' && isAssemblyFilePath(document.uri.fsPath)) {
+  if (isAssemblyDocument(document)) {
     uriMap.set(document.uri.toString(), document.uri);
   }
 
@@ -1280,6 +1500,9 @@ async function provideReferences(document, position, context) {
   };
 
   for (const uri of uriMap.values()) {
+    if (isCancelled(token)) {
+      return locations;
+    }
     const text = await getTextForUri(uri, openDocs);
     if (!text) {
       continue;
@@ -1287,6 +1510,9 @@ async function provideReferences(document, position, context) {
 
     const matches = findSymbolMatchesInText(text, symbol);
     for (const match of matches) {
+      if (isCancelled(token)) {
+        return locations;
+      }
       if (
         !includeDeclaration &&
         isDefinitionOccurrence(match.lineText, symbol, match.column)
@@ -1300,9 +1526,16 @@ async function provideReferences(document, position, context) {
   }
 
   if (includeDeclaration) {
-    const index = await getDfpIndex();
+    if (isCancelled(token)) {
+      return locations;
+    }
+    const scope = getIndexScopeForDocument(document);
+    const index = await getDfpIndex(scope);
     const hits = index.symbols.get(symbol) || [];
     for (const hit of hits) {
+      if (isCancelled(token)) {
+        return locations;
+      }
       const column = Math.max(0, (hit.text || '').indexOf(symbol));
       if (
         addLocation(vscode.Uri.file(hit.file), Math.max(0, hit.line - 1), column)
@@ -1315,7 +1548,11 @@ async function provideReferences(document, position, context) {
   return locations;
 }
 
-async function provideHover(document, position) {
+async function provideHover(document, position, token) {
+  if (isCancelled(token)) {
+    return null;
+  }
+
   const symbol = extractSymbolAtPosition(document, position);
   if (!symbol) {
     return null;
@@ -1324,7 +1561,11 @@ async function provideHover(document, position) {
   const localSymbols = getLocalSymbols(document);
   const local = localSymbols.get(symbol);
 
-  const index = await getDfpIndex();
+  const scope = getIndexScopeForDocument(document);
+  const index = await getDfpIndex(scope);
+  if (isCancelled(token)) {
+    return null;
+  }
   const hits = index.symbols.get(symbol) || [];
 
   if (!local && hits.length === 0) {
@@ -1359,7 +1600,11 @@ async function provideHover(document, position) {
   return new vscode.Hover(md);
 }
 
-async function provideDefinition(document, position) {
+async function provideDefinition(document, position, token) {
+  if (isCancelled(token)) {
+    return null;
+  }
+
   const symbol = extractSymbolAtPosition(document, position);
   if (!symbol) {
     return null;
@@ -1373,7 +1618,11 @@ async function provideDefinition(document, position) {
     );
   }
 
-  const index = await getDfpIndex();
+  const scope = getIndexScopeForDocument(document);
+  const index = await getDfpIndex(scope);
+  if (isCancelled(token)) {
+    return null;
+  }
   const hits = index.symbols.get(symbol) || [];
   for (const hit of hits.slice(0, 20)) {
     locations.push(makeLocation(vscode.Uri.file(hit.file), hit.line));
@@ -1388,7 +1637,11 @@ async function provideDefinition(document, position) {
   return locations;
 }
 
-async function provideCompletionItems(document, position) {
+async function provideCompletionItems(document, position, token) {
+  if (isCancelled(token)) {
+    return [];
+  }
+
   if (!getConfig().get('enableCompletion', true)) {
     return [];
   }
@@ -1401,6 +1654,9 @@ async function provideCompletionItems(document, position) {
 
   const localSymbols = getLocalSymbols(document);
   for (const [symbol, info] of localSymbols.entries()) {
+    if (isCancelled(token)) {
+      return results;
+    }
     if (!startsWithIgnoreCase(symbol, prefix)) {
       continue;
     }
@@ -1419,6 +1675,9 @@ async function provideCompletionItems(document, position) {
 
   if (getConfig().get('enableInstructionCompletion', true)) {
     for (const mnemonic of AVR_INSTRUCTION_MNEMONICS) {
+      if (isCancelled(token)) {
+        return results;
+      }
       if (seen.has(completionSeenKey(mnemonic))) {
         continue;
       }
@@ -1443,8 +1702,15 @@ async function provideCompletionItems(document, position) {
     }
   }
 
-  const index = await getDfpIndex();
+  if (isCancelled(token)) {
+    return results;
+  }
+  const scope = getIndexScopeForDocument(document);
+  const index = await getDfpIndex(scope);
   for (const symbol of index.symbolList) {
+    if (isCancelled(token)) {
+      return results;
+    }
     if (seen.has(completionSeenKey(symbol))) {
       continue;
     }
@@ -1482,6 +1748,21 @@ function getSelectionOrWord(editor) {
   return extractSymbolAtPosition(editor.document, editor.selection.active) || '';
 }
 
+function formatActiveTargetSummary(index, scope) {
+  const builtAtText =
+    index && index.builtAt ? new Date(index.builtAt).toISOString() : 'unknown';
+  const lines = [
+    `Scope: ${scopeLabel(scope)}`,
+    `Device: ${index.device || 'unknown'}`,
+    `Pack root: ${index.root || 'unknown'}`,
+    `Detected project: ${index.detectedProjectFile || 'none'}`,
+    `Indexed files: ${index.scannedFiles.length}`,
+    `Indexed symbols: ${index.symbolList.length}`,
+    `Built at: ${builtAtText}`
+  ];
+  return lines.join('\n');
+}
+
 async function runLookupCommand() {
   const editor = vscode.window.activeTextEditor;
   const seed = getSelectionOrWord(editor);
@@ -1514,7 +1795,10 @@ async function runLookupCommand() {
     }
   }
 
-  const index = await getDfpIndex();
+  const scope = editor
+    ? getIndexScopeForDocument(editor.document)
+    : getDefaultIndexScope();
+  const index = await getDfpIndex(scope);
   const hits = index.symbols.get(symbol) || [];
   for (const hit of hits.slice(0, 50)) {
     const relPath = path.relative(index.root, hit.file) || hit.file;
@@ -1551,25 +1835,72 @@ async function runLookupCommand() {
 }
 
 async function rebuildIndexCommand() {
-  const index = await getDfpIndex(true);
+  const scope = getDefaultIndexScope();
+  let index = null;
+  try {
+    index = await getDfpIndex(scope, true);
+  } catch (error) {
+    logError(`Rebuild index failed for ${scopeLabel(scope)}`, error);
+    vscode.window.showErrorMessage(
+      'AVR® ASM Navigator: failed to rebuild symbol index. See "AVR ASM Navigator" output.'
+    );
+    return;
+  }
   if (!index.scannedFiles.length) {
+    logWarn(
+      `No DFP symbol files found for ${index.device || 'target'} at "${index.root}" (scope: ${scopeLabel(scope)}).`
+    );
     vscode.window.showWarningMessage(
       `AVR® ASM Navigator: no DFP symbol files found for ${index.device || 'target'} at "${index.root}".`
     );
     return;
   }
+  logInfo(
+    `Index rebuild requested for ${scopeLabel(scope)}: device=${index.device || 'unknown'}, symbols=${index.symbolList.length}.`
+  );
   vscode.window.showInformationMessage(
     `AVR® ASM Navigator index rebuilt for ${index.device || 'target'} (${index.symbolList.length} symbols).`
   );
 }
 
+async function runShowActiveTargetCommand() {
+  const editor = vscode.window.activeTextEditor;
+  const scope = editor
+    ? getIndexScopeForDocument(editor.document)
+    : getDefaultIndexScope();
+
+  let index = null;
+  try {
+    index = await getDfpIndex(scope);
+  } catch (error) {
+    logError(`Show active target failed for ${scopeLabel(scope)}`, error);
+    vscode.window.showErrorMessage(
+      'AVR® ASM Navigator: failed to resolve active target. See "AVR ASM Navigator" output.'
+    );
+    return;
+  }
+
+  const summary = formatActiveTargetSummary(index, scope);
+  const channel = getOutputChannel();
+  channel.appendLine('--- Active Target ---');
+  channel.appendLine(summary);
+  channel.show(true);
+
+  logInfo(
+    `Active target requested for ${scopeLabel(scope)}: device=${index.device || 'unknown'}, symbols=${index.symbolList.length}.`
+  );
+  vscode.window.showInformationMessage(
+    `AVR® ASM target: ${index.device || 'unknown'} (${index.symbolList.length} symbols).`
+  );
+}
+
 function registerProviders(context) {
   const selector = [
-    { scheme: 'file', language: 'avr-asm' },
-    { scheme: 'file', language: 'nasm' },
-    { scheme: 'file', language: 'asm' },
-    { scheme: 'file', language: 'assembly' },
-    { scheme: 'file', language: 'gas' }
+    { language: 'avr-asm' },
+    { language: 'nasm' },
+    { language: 'asm' },
+    { language: 'assembly' },
+    { language: 'gas' }
   ];
 
   context.subscriptions.push(
@@ -1615,18 +1946,25 @@ function registerProviders(context) {
 }
 
 function activate(context) {
+  context.subscriptions.push(getOutputChannel());
+
   context.subscriptions.push(
     vscode.commands.registerCommand('avrAsmNavigator.lookupSymbol', runLookupCommand)
   );
   context.subscriptions.push(
     vscode.commands.registerCommand('avrAsmNavigator.rebuildIndex', rebuildIndexCommand)
   );
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'avrAsmNavigator.showActiveTarget',
+      runShowActiveTargetCommand
+    )
+  );
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration('avrAsmNavigator')) {
-        cachedIndex = null;
-        indexBuildPromise = null;
+        clearIndexCache();
       }
     })
   );
@@ -1639,18 +1977,48 @@ function activate(context) {
 
   context.subscriptions.push(
     vscode.workspace.onDidSaveTextDocument((document) => {
-      if (document.fileName.endsWith('.mplab.json')) {
-        cachedIndex = null;
-        indexBuildPromise = null;
+      if (isMplabProjectUri(document.uri) || isAssemblyDocument(document)) {
+        clearIndexCache(getIndexScopeForDocument(document));
       }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.workspace.onDidCreateFiles((event) => {
+      for (const uri of event.files) {
+        maybeInvalidateIndexForUri(uri);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.workspace.onDidDeleteFiles((event) => {
+      for (const uri of event.files) {
+        maybeInvalidateIndexForUri(uri);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.workspace.onDidRenameFiles((event) => {
+      for (const file of event.files) {
+        maybeInvalidateIndexForUri(file.oldUri);
+        maybeInvalidateIndexForUri(file.newUri);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      clearIndexCache();
     })
   );
 
   registerProviders(context);
 
   // Warm the index in background so first hover is quick.
-  getDfpIndex().catch(() => {
-    // Ignore errors; user can run rebuild command after fixing dfpPath.
+  getDfpIndex(getDefaultIndexScope()).catch(() => {
+    logWarn('Background index warm-up failed. Run "AVR® ASM: Rebuild Symbol Index" after fixing configuration.');
   });
 }
 

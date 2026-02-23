@@ -62,6 +62,7 @@ If you use WSL/SSH/Container remote contexts, uninstall in that same remote cont
 - Workspace symbols (`Go to Symbol in Workspace`)
 - Find References for AVR® assembly symbols across workspace files
 - Command: `AVR® ASM: Lookup Symbol` (quick-pick jump to symbol definition)
+- Command: `AVR® ASM: Show Active Target` (prints resolved scope/device/pack details)
 
 ## Configuration
 
@@ -85,6 +86,7 @@ If you use WSL/SSH/Container remote contexts, uninstall in that same remote cont
 
 - Preferred mode is `avr-asm` (provided by this extension).
 - If no `.vscode/*.mplab.json` exists, the extension also tries to infer device from workspace source text (for example `ATmega4809`, `AVR128DA32`, `__AVR_*__`, `io*.h`, or `*def.inc` hints).
+- Diagnostic details are written to the `AVR ASM Navigator` output channel.
 
 ## Scope and Non-goals
 

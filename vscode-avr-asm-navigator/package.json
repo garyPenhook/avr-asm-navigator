@@ -35,7 +35,8 @@
 		"onLanguage:assembly",
 		"onLanguage:gas",
 		"onCommand:avrAsmNavigator.lookupSymbol",
-		"onCommand:avrAsmNavigator.rebuildIndex"
+		"onCommand:avrAsmNavigator.rebuildIndex",
+		"onCommand:avrAsmNavigator.showActiveTarget"
 	],
 	"main": "./extension.js",
 	"contributes": {
@@ -68,6 +69,10 @@
 			{
 				"command": "avrAsmNavigator.rebuildIndex",
 				"title": "AVR® ASM: Rebuild Symbol Index"
+			},
+			{
+				"command": "avrAsmNavigator.showActiveTarget",
+				"title": "AVR® ASM: Show Active Target"
 			}
 		],
 		"configuration": {
