@@ -9,6 +9,7 @@ PUBLISHER="$(node -p "require('${ROOT_DIR}/package.json').publisher")"
 DISPLAY_NAME="$(node -p "require('${ROOT_DIR}/package.json').displayName")"
 DESCRIPTION="$(node -p "require('${ROOT_DIR}/package.json').description.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')")"
 ENGINE="$(node -p "require('${ROOT_DIR}/package.json').engines.vscode")"
+TAGS="$(node -p "(require('${ROOT_DIR}/package.json').keywords || ['avr','assembly','microchip']).join(';')")"
 
 OUT_FILE="${ROOT_DIR}/${PUBLISHER}.${NAME}-${VERSION}.vsix"
 WORK_DIR="$(mktemp -d)"
@@ -38,7 +39,7 @@ cat > "${WORK_DIR}/extension.vsixmanifest" <<EOF
     <Identity Id="${PUBLISHER}.${NAME}" Version="${VERSION}" Language="en-US" Publisher="${PUBLISHER}" />
     <DisplayName>${DISPLAY_NAME}</DisplayName>
     <Description xml:space="preserve">${DESCRIPTION}</Description>
-    <Tags>avr;assembly;attiny3217;microchip</Tags>
+    <Tags>${TAGS}</Tags>
     <Categories>Programming Languages,Other</Categories>
     <Properties>
       <Property Id="Microsoft.VisualStudio.Code.Engine" Value="${ENGINE}" />
@@ -60,4 +61,3 @@ EOF
 
 (cd "${WORK_DIR}" && zip -q -r "${OUT_FILE}" "[Content_Types].xml" "extension.vsixmanifest" extension)
 echo "Created ${OUT_FILE}"
-

@@ -6,7 +6,15 @@ Optimized for Microchip® MPLAB® XC8™ (`xc8-cc`) AVR® workflows and device-f
 Repository:
 - https://github.com/garyPenhook/avr-asm-hints
 
-## Package And Install
+## Requirements
+
+- Visual Studio Code `1.85+`
+- Microchip® VS Code extensions with MPLAB® project metadata (`.vscode/*.mplab.json`) for best auto-detection
+- Installed Microchip® AVR® DFP pack for your target device
+- `node` and `zip` to build the VSIX package
+- Optional: `code` CLI for command-line installation
+
+## Package and Install
 
 Build the VSIX:
 
@@ -14,10 +22,10 @@ Build the VSIX:
 ./package-vsix.sh
 ```
 
-Install it in VS Code:
+Install the generated VSIX in VS Code:
 
 ```sh
-code --install-extension ./avr1-local.avr-asm-navigator-0.1.4.vsix --force
+code --install-extension ./avr1-local.avr-asm-navigator-<version>.vsix --force
 ```
 
 ## Features
@@ -52,9 +60,13 @@ code --install-extension ./avr1-local.avr-asm-navigator-0.1.4.vsix --force
 
 ## Notes
 
-- This extension is for editor assistance only.
-- It does not replace the Microchip® build/debug toolchain.
 - Preferred mode is `avr-asm` (provided by this extension).
+
+## Scope and Non-goals
+
+- This extension provides editor assistance (syntax mode, hover, completion, definitions, symbols, and references).
+- It does not compile, link, flash, or debug firmware.
+- It does not replace the Microchip® build/debug toolchain.
 - Designed for AVR® device families supported by Microchip® DFP packs.
 - Best results are with MPLAB® project metadata (`.vscode/*.mplab.json`) from Microchip® VS Code extensions.
 
