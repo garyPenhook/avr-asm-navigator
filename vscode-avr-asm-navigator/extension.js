@@ -7,8 +7,8 @@ const os = require('os');
 
 const WORD_REGEX = /[A-Za-z_.$][A-Za-z0-9_.$]*/;
 const LOCAL_LABEL_REGEX = /^\s*([A-Za-z_.$][A-Za-z0-9_.$]*)\s*:/;
-const LOCAL_EQU_REGEX = /^\s*\.equ\s+([A-Za-z_.$][A-Za-z0-9_.$]*)\s*=\s*(.+)$/i;
-const LOCAL_SET_REGEX = /^\s*\.set\s+([A-Za-z_.$][A-Za-z0-9_.$]*)\s*=\s*(.+)$/i;
+const LOCAL_EQU_REGEX = /^\s*\.equ\s+([A-Za-z_.$][A-Za-z0-9_.$]*)\s*(?:=|,)\s*(.+)$/i;
+const LOCAL_SET_REGEX = /^\s*\.set\s+([A-Za-z_.$][A-Za-z0-9_.$]*)\s*(?:=|,)\s*(.+)$/i;
 const IDENTIFIER_CHAR_CLASS = 'A-Za-z0-9_.$';
 const WORKSPACE_ASM_GLOB = '**/*.{S,s,asm,ASM,as,AS,inc,INC}';
 const WORKSPACE_EXCLUDE_GLOB = '**/{_build,out,cmake,node_modules,.git}/**';
@@ -1008,7 +1008,7 @@ function parseSymbolsFromLine(line, kind) {
     });
   }
 
-  match = /^\s*\.equ\s+([A-Za-z_.$][A-Za-z0-9_.$]*)\s*=\s*(.+)$/i.exec(line);
+  match = /^\s*\.equ\s+([A-Za-z_.$][A-Za-z0-9_.$]*)\s*(?:=|,)\s*(.+)$/i.exec(line);
   if (match) {
     found.push({
       symbol: match[1],
