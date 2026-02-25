@@ -178,6 +178,127 @@ const AVR_NO_OPERAND_INSTRUCTIONS = new Set([
   'spm',
   'wdr'
 ]);
+const AVR_BRANCH_CONDITIONS = Object.freeze({
+  brcc: 'Branch if carry cleared (C=0).',
+  brcs: 'Branch if carry set (C=1).',
+  breq: 'Branch if equal / zero set (Z=1).',
+  brne: 'Branch if not equal / zero cleared (Z=0).',
+  brge: 'Branch if signed greater-or-equal (S=0).',
+  brlt: 'Branch if signed less-than (S=1).',
+  brlo: 'Branch if unsigned lower (C=1).',
+  brsh: 'Branch if unsigned same-or-higher (C=0).',
+  brmi: 'Branch if minus / negative (N=1).',
+  brpl: 'Branch if plus / non-negative (N=0).',
+  brvc: 'Branch if overflow cleared (V=0).',
+  brvs: 'Branch if overflow set (V=1).',
+  brhc: 'Branch if half-carry cleared (H=0).',
+  brhs: 'Branch if half-carry set (H=1).',
+  brid: 'Branch if global interrupts disabled (I=0).',
+  brie: 'Branch if global interrupts enabled (I=1).',
+  brtc: 'Branch if T flag cleared (T=0).',
+  brts: 'Branch if T flag set (T=1).',
+  brbc: 'Branch if bit in SREG is cleared.',
+  brbs: 'Branch if bit in SREG is set.'
+});
+const AVR_INSTRUCTION_INFO = Object.freeze({
+  adc: { syntax: 'adc Rd, Rr', summary: 'Add register with carry: Rd <- Rd + Rr + C.', flags: 'Z, C, N, V, S, H' },
+  add: { syntax: 'add Rd, Rr', summary: 'Add registers: Rd <- Rd + Rr.', flags: 'Z, C, N, V, S, H' },
+  adiw: { syntax: 'adiw Rd+1:Rd, K', summary: 'Add immediate to a 16-bit register pair (r24..r31 pairs).', flags: 'Z, C, N, V, S' },
+  and: { syntax: 'and Rd, Rr', summary: 'Bitwise AND registers.', flags: 'Z, N, V(=0), S' },
+  andi: { syntax: 'andi Rd, K', summary: 'Bitwise AND immediate (Rd in r16..r31).', flags: 'Z, N, V(=0), S' },
+  asr: { syntax: 'asr Rd', summary: 'Arithmetic shift right; preserves sign bit.', flags: 'Z, C, N, V, S' },
+  bclr: { syntax: 'bclr s', summary: 'Clear SREG bit s (alias family for C/H/N/V/S/T/I/Z).' },
+  bld: { syntax: 'bld Rd, b', summary: 'Load T flag into bit b of register Rd.' },
+  bst: { syntax: 'bst Rd, b', summary: 'Store bit b of register Rd into T flag.' },
+  call: { syntax: 'call k', summary: 'Absolute call to subroutine; pushes return address.', cycles: '4 (core dependent)' },
+  cbi: { syntax: 'cbi A, b', summary: 'Clear bit b in low I/O register A (0x00..0x1F).', cycles: '2' },
+  cbr: { syntax: 'cbr Rd, K', summary: 'Clear bits in register (alias of andi with inverted mask).', flags: 'Z, N, V(=0), S' },
+  clc: { syntax: 'clc', summary: 'Clear carry flag C in SREG.' },
+  clh: { syntax: 'clh', summary: 'Clear half-carry flag H in SREG.' },
+  cli: { syntax: 'cli', summary: 'Clear global interrupt enable flag I.' },
+  cln: { syntax: 'cln', summary: 'Clear negative flag N in SREG.' },
+  clr: { syntax: 'clr Rd', summary: 'Clear register (alias of eor Rd,Rd).', flags: 'Z=1, N=0, V=0, S=0' },
+  cls: { syntax: 'cls', summary: 'Clear signed flag S in SREG.' },
+  clt: { syntax: 'clt', summary: 'Clear T bit in SREG.' },
+  clv: { syntax: 'clv', summary: 'Clear overflow flag V in SREG.' },
+  clz: { syntax: 'clz', summary: 'Clear zero flag Z in SREG.' },
+  com: { syntax: 'com Rd', summary: 'One’s complement: Rd <- 0xFF - Rd.', flags: 'Z, C(=1), N, V(=0), S' },
+  cp: { syntax: 'cp Rd, Rr', summary: 'Compare registers (subtract without storing result).', flags: 'Z, C, N, V, S, H' },
+  cpc: { syntax: 'cpc Rd, Rr', summary: 'Compare with carry (multi-byte compare support).', flags: 'Z, C, N, V, S, H' },
+  cpi: { syntax: 'cpi Rd, K', summary: 'Compare register (r16..r31) with immediate.', flags: 'Z, C, N, V, S, H' },
+  cpse: { syntax: 'cpse Rd, Rr', summary: 'Compare and skip next instruction if equal.', cycles: '1/2/3 depending on skip' },
+  dec: { syntax: 'dec Rd', summary: 'Decrement register.', flags: 'Z, N, V, S' },
+  des: { syntax: 'des K', summary: 'DES round instruction (devices that support it).' },
+  eicall: { syntax: 'eicall', summary: 'Extended indirect call via EIND:Z.' },
+  eijmp: { syntax: 'eijmp', summary: 'Extended indirect jump via EIND:Z.' },
+  elpm: { syntax: 'elpm [Rd], Z[+]', summary: 'Load from program memory above 64 KiW using RAMPZ.' },
+  eor: { syntax: 'eor Rd, Rr', summary: 'Bitwise XOR registers.', flags: 'Z, N, V(=0), S' },
+  fmul: { syntax: 'fmul Rd, Rr', summary: 'Fractional unsigned multiply; result in r1:r0.', flags: 'Z, C' },
+  fmuls: { syntax: 'fmuls Rd, Rr', summary: 'Fractional signed multiply; result in r1:r0.', flags: 'Z, C' },
+  fmulsu: { syntax: 'fmulsu Rd, Rr', summary: 'Fractional signed/unsigned multiply; result in r1:r0.', flags: 'Z, C' },
+  icall: { syntax: 'icall', summary: 'Indirect call through Z; pushes return address.' },
+  ijmp: { syntax: 'ijmp', summary: 'Indirect jump through Z.' },
+  in: { syntax: 'in Rd, A', summary: 'Read I/O register A into Rd.' },
+  inc: { syntax: 'inc Rd', summary: 'Increment register.', flags: 'Z, N, V, S' },
+  jmp: { syntax: 'jmp k', summary: 'Absolute jump.' },
+  lac: { syntax: 'lac Z, Rd', summary: 'Load from RAM at Z, then clear bits selected by Rd.' },
+  las: { syntax: 'las Z, Rd', summary: 'Load from RAM at Z, then set bits selected by Rd.' },
+  lat: { syntax: 'lat Z, Rd', summary: 'Load from RAM at Z, then toggle bits selected by Rd.' },
+  ld: { syntax: 'ld Rd, X|Y|Z', summary: 'Load register from data memory via pointer register.' },
+  ldd: { syntax: 'ldd Rd, Y+q|Z+q', summary: 'Load with displacement from Y or Z pointer.' },
+  ldi: { syntax: 'ldi Rd, K', summary: 'Load immediate into register r16..r31.' },
+  lds: { syntax: 'lds Rd, k', summary: 'Load direct from SRAM address k.' },
+  lpm: { syntax: 'lpm [Rd], Z[+]', summary: 'Load from program memory via Z.' },
+  lsl: { syntax: 'lsl Rd', summary: 'Logical shift left (alias of add Rd,Rd).', flags: 'Z, C, N, V, S, H' },
+  lsr: { syntax: 'lsr Rd', summary: 'Logical shift right.', flags: 'Z, C, N(=0), V, S' },
+  mov: { syntax: 'mov Rd, Rr', summary: 'Copy register Rr to Rd.' },
+  movw: { syntax: 'movw Rd+1:Rd, Rr+1:Rr', summary: 'Copy register word (even register pairs).' },
+  mul: { syntax: 'mul Rd, Rr', summary: 'Unsigned multiply; result in r1:r0.', flags: 'Z, C' },
+  muls: { syntax: 'muls Rd, Rr', summary: 'Signed multiply (r16..r31); result in r1:r0.', flags: 'Z, C' },
+  mulsu: { syntax: 'mulsu Rd, Rr', summary: 'Signed/unsigned multiply; result in r1:r0.', flags: 'Z, C' },
+  neg: { syntax: 'neg Rd', summary: 'Two’s complement negate: Rd <- 0 - Rd.', flags: 'Z, C, N, V, S, H' },
+  nop: { syntax: 'nop', summary: 'No operation; advances PC only.', cycles: '1' },
+  or: { syntax: 'or Rd, Rr', summary: 'Bitwise OR registers.', flags: 'Z, N, V(=0), S' },
+  ori: { syntax: 'ori Rd, K', summary: 'Bitwise OR immediate (Rd in r16..r31).', flags: 'Z, N, V(=0), S' },
+  out: { syntax: 'out A, Rr', summary: 'Write register Rr to I/O register A.' },
+  pop: { syntax: 'pop Rd', summary: 'Pop byte from stack into Rd.', cycles: '2' },
+  push: { syntax: 'push Rr', summary: 'Push register onto stack.', cycles: '2' },
+  rcall: { syntax: 'rcall k', summary: 'Relative call; pushes return address.', cycles: '3' },
+  ret: { syntax: 'ret', summary: 'Return from subroutine.', cycles: '4' },
+  reti: { syntax: 'reti', summary: 'Return from interrupt and set I flag.', cycles: '4' },
+  rjmp: { syntax: 'rjmp k', summary: 'Relative jump.', cycles: '2' },
+  rol: { syntax: 'rol Rd', summary: 'Rotate left through carry.', flags: 'Z, C, N, V, S' },
+  ror: { syntax: 'ror Rd', summary: 'Rotate right through carry.', flags: 'Z, C, N, V, S' },
+  sbc: { syntax: 'sbc Rd, Rr', summary: 'Subtract with carry: Rd <- Rd - Rr - C.', flags: 'Z, C, N, V, S, H' },
+  sbci: { syntax: 'sbci Rd, K', summary: 'Subtract immediate with carry (r16..r31).', flags: 'Z, C, N, V, S, H' },
+  sbi: { syntax: 'sbi A, b', summary: 'Set bit b in low I/O register A (0x00..0x1F).', cycles: '2' },
+  sbic: { syntax: 'sbic A, b', summary: 'Skip next instruction if I/O bit is clear.', cycles: '1/2/3 depending on skip' },
+  sbis: { syntax: 'sbis A, b', summary: 'Skip next instruction if I/O bit is set.', cycles: '1/2/3 depending on skip' },
+  sbiw: { syntax: 'sbiw Rd+1:Rd, K', summary: 'Subtract immediate from a 16-bit register pair.', flags: 'Z, C, N, V, S' },
+  sbr: { syntax: 'sbr Rd, K', summary: 'Set bits in register (alias of ori).', flags: 'Z, N, V(=0), S' },
+  sbrc: { syntax: 'sbrc Rr, b', summary: 'Skip next instruction if bit b in register is clear.', cycles: '1/2/3 depending on skip' },
+  sbrs: { syntax: 'sbrs Rr, b', summary: 'Skip next instruction if bit b in register is set.', cycles: '1/2/3 depending on skip' },
+  sec: { syntax: 'sec', summary: 'Set carry flag C in SREG.' },
+  seh: { syntax: 'seh', summary: 'Set half-carry flag H in SREG.' },
+  sei: { syntax: 'sei', summary: 'Set global interrupt enable flag I.' },
+  sen: { syntax: 'sen', summary: 'Set negative flag N in SREG.' },
+  ser: { syntax: 'ser Rd', summary: 'Set register to 0xFF (alias of ldi Rd,0xFF).' },
+  ses: { syntax: 'ses', summary: 'Set signed flag S in SREG.' },
+  set: { syntax: 'set', summary: 'Set T bit in SREG.' },
+  sev: { syntax: 'sev', summary: 'Set overflow flag V in SREG.' },
+  sez: { syntax: 'sez', summary: 'Set zero flag Z in SREG.' },
+  sleep: { syntax: 'sleep', summary: 'Enter sleep mode configured by MCU control registers.' },
+  spm: { syntax: 'spm', summary: 'Store Program Memory (self-programming; boot section use).' },
+  st: { syntax: 'st X|Y|Z, Rr', summary: 'Store register to data memory via pointer register.' },
+  std: { syntax: 'std Y+q|Z+q, Rr', summary: 'Store with displacement using Y or Z pointer.' },
+  sts: { syntax: 'sts k, Rr', summary: 'Store direct to SRAM address k.' },
+  sub: { syntax: 'sub Rd, Rr', summary: 'Subtract registers: Rd <- Rd - Rr.', flags: 'Z, C, N, V, S, H' },
+  subi: { syntax: 'subi Rd, K', summary: 'Subtract immediate from register r16..r31.', flags: 'Z, C, N, V, S, H' },
+  swap: { syntax: 'swap Rd', summary: 'Swap high and low nibble in Rd.' },
+  tst: { syntax: 'tst Rd', summary: 'Test for zero/negative (alias of and Rd,Rd).', flags: 'Z, N, V(=0), S' },
+  wdr: { syntax: 'wdr', summary: 'Watchdog reset instruction.' },
+  xch: { syntax: 'xch Z, Rd', summary: 'Exchange register with SRAM byte pointed by Z.' }
+});
 const AVR_REGISTER_NAMES = Object.freeze([
   ...Array.from({ length: 32 }, (_, index) => `r${index}`),
   'x',
@@ -1299,6 +1420,40 @@ function makeLocation(uri, lineNumber1Based) {
   return new vscode.Location(uri, position);
 }
 
+function getInstructionHoverInfo(symbol) {
+  const mnemonic = String(symbol || '').toLowerCase();
+  if (!mnemonic) {
+    return null;
+  }
+
+  const direct = AVR_INSTRUCTION_INFO[mnemonic] || null;
+  if (direct) {
+    return { mnemonic, ...direct };
+  }
+
+  const branch = AVR_BRANCH_CONDITIONS[mnemonic] || null;
+  if (branch) {
+    return {
+      mnemonic,
+      syntax: mnemonic === 'brbc' || mnemonic === 'brbs' ? `${mnemonic} s, k` : `${mnemonic} k`,
+      summary: branch,
+      cycles: '1 if not taken, 2 if taken'
+    };
+  }
+
+  if (AVR_INSTRUCTION_MNEMONICS.includes(mnemonic)) {
+    return {
+      mnemonic,
+      syntax: AVR_NO_OPERAND_INSTRUCTIONS.has(mnemonic)
+        ? mnemonic
+        : `${mnemonic} ...`,
+      summary: 'AVR instruction mnemonic.'
+    };
+  }
+
+  return null;
+}
+
 function isUriInWorkspaceFolder(uri, workspaceFolder) {
   if (!workspaceFolder) {
     return true;
@@ -1652,6 +1807,7 @@ async function provideHover(document, position, token) {
   if (!symbol) {
     return null;
   }
+  const instruction = getInstructionHoverInfo(symbol);
 
   const localSymbols = getLocalSymbols(document);
   const local = localSymbols.get(symbol);
@@ -1663,12 +1819,28 @@ async function provideHover(document, position, token) {
   }
   const hits = index.symbols.get(symbol) || [];
 
-  if (!local && hits.length === 0) {
+  if (!instruction && !local && hits.length === 0) {
     return null;
   }
 
   const md = new vscode.MarkdownString();
   md.appendMarkdown(`**${safeMarkdown(symbol)}**`);
+
+  if (instruction) {
+    if (instruction.syntax) {
+      md.appendMarkdown(`\n\nInstruction syntax:`);
+      md.appendCodeblock(instruction.syntax, 'asm');
+    }
+    if (instruction.summary) {
+      md.appendMarkdown(`\n\n${safeMarkdown(instruction.summary)}`);
+    }
+    if (instruction.flags) {
+      md.appendMarkdown(`\n\nFlags: \`${safeMarkdown(instruction.flags)}\``);
+    }
+    if (instruction.cycles) {
+      md.appendMarkdown(`\n\nCycles: \`${safeMarkdown(instruction.cycles)}\``);
+    }
+  }
 
   if (local) {
     md.appendMarkdown(
