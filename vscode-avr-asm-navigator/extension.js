@@ -781,6 +781,7 @@ async function detectMplabTarget(preferredWorkspaceFolder = null) {
       };
 
       let xc8Version = '';
+      let avrGccVersion = '';
       const toolchainName =
         typeof config.toolchain === 'string' ? config.toolchain.trim() : '';
       if (toolchainName) {
@@ -796,12 +797,19 @@ async function detectMplabTarget(preferredWorkspaceFolder = null) {
         );
         if (
           toolchainGroup &&
-          typeof toolchainGroup.provider === 'string' &&
-          toolchainGroup.provider.toLowerCase().includes('xc8@')
+          typeof toolchainGroup.provider === 'string'
         ) {
-          const versionMatch = /xc8@([0-9.]+)/i.exec(toolchainGroup.provider);
-          if (versionMatch) {
-            xc8Version = versionMatch[1];
+          const provider = toolchainGroup.provider.toLowerCase();
+          if (provider.includes('xc8@')) {
+            const versionMatch = /xc8@([0-9.]+)/i.exec(toolchainGroup.provider);
+            if (versionMatch) {
+              xc8Version = versionMatch[1];
+            }
+          } else if (provider.includes('avr-gcc@') || provider.includes('avr_gcc@')) {
+            const versionMatch = /avr[_-]gcc@([0-9.]+)/i.exec(toolchainGroup.provider);
+            if (versionMatch) {
+              avrGccVersion = versionMatch[1];
+            }
           }
         }
       }
@@ -812,9 +820,25 @@ async function detectMplabTarget(preferredWorkspaceFolder = null) {
           projectFile: fullUri.toString(),
           device: device || '',
           pack,
-          xc8Version
+          xc8Version,
+          avrGccVersion
         };
       }
+    }
+  }
+  return null;
+}
+
+async function resolveAvrGccRoot() {
+  // Resolve the real installation root of avr-gcc, following symlinks.
+  const candidates = ['/usr/local/bin/avr-gcc', '/usr/bin/avr-gcc'];
+  for (const bin of candidates) {
+    try {
+      const real = await fs.realpath(bin);
+      // real = /opt/avr-gcc-15.2.0/bin/avr-gcc  →  root = /opt/avr-gcc-15.2.0
+      return path.resolve(path.dirname(real), '..');
+    } catch {
+      // not found, try next
     }
   }
   return null;
@@ -824,17 +848,29 @@ async function resolveCompilerIncludeDirs(detected = null) {
   const candidates = [];
   const seen = new Set();
   const addCandidate = (dirPath) => {
-    if (!dirPath) {
-      return;
-    }
+    if (!dirPath) return;
     const normalized = path.normalize(dirPath);
-    if (seen.has(normalized)) {
-      return;
-    }
+    if (seen.has(normalized)) return;
     seen.add(normalized);
     candidates.push(normalized);
   };
 
+  // ── avr-gcc / avr-libc (preferred on Linux) ──────────────────────────────
+  const avrGccRoot = await resolveAvrGccRoot();
+  if (avrGccRoot) {
+    // avr-libc headers: <root>/avr/include/avr
+    addCandidate(path.join(avrGccRoot, 'avr', 'include', 'avr'));
+    // GCC internal headers (for __builtin_* completions)
+    const libGccDir = path.join(avrGccRoot, 'lib', 'gcc', 'avr');
+    const gccVersions = (await listDirSafe(libGccDir)).sort((a, b) =>
+      compareVersionLabels(b, a)
+    );
+    for (const v of gccVersions) {
+      addCandidate(path.join(libGccDir, v, 'include'));
+    }
+  }
+
+  // ── XC8 fallback ─────────────────────────────────────────────────────────
   if (detected && detected.xc8Version) {
     addCandidate(
       path.join('/opt/microchip/xc8', `v${detected.xc8Version}`, 'avr', 'avr', 'include', 'avr')
@@ -843,11 +879,11 @@ async function resolveCompilerIncludeDirs(detected = null) {
       path.join('/opt/microchip/xc8', detected.xc8Version, 'avr', 'avr', 'include', 'avr')
     );
   }
-
   const xc8Root = '/opt/microchip/xc8';
-  const xc8Versions = await listDirSafe(xc8Root);
-  const sortedVersions = xc8Versions.sort((a, b) => compareVersionLabels(b, a));
-  for (const version of sortedVersions) {
+  const xc8Versions = (await listDirSafe(xc8Root)).sort((a, b) =>
+    compareVersionLabels(b, a)
+  );
+  for (const version of xc8Versions) {
     addCandidate(path.join(xc8Root, version, 'avr', 'avr', 'include', 'avr'));
   }
 
@@ -961,8 +997,8 @@ async function resolveHeaderPath(packRoot, devLibName, token) {
     return null;
   }
   const includeDirs = [
-    path.join(packRoot, 'xc8', 'avr', 'include', 'avr'),
-    path.join(packRoot, 'include', 'avr')
+    path.join(packRoot, 'include', 'avr'),
+    path.join(packRoot, 'xc8', 'avr', 'include', 'avr')
   ];
 
   if (devLibName) {
@@ -2040,15 +2076,17 @@ function getSelectionOrWord(editor) {
 }
 
 function formatActiveTargetSummary(index, scope) {
-  const builtAtText =
-    index && index.builtAt ? new Date(index.builtAt).toISOString() : 'unknown';
+  if (!index) {
+    return `Scope: ${scopeLabel(scope)}\nNo index built yet — open an AVR assembly file to trigger indexing.`;
+  }
+  const builtAtText = index.builtAt ? new Date(index.builtAt).toISOString() : 'unknown';
   const lines = [
     `Scope: ${scopeLabel(scope)}`,
     `Device: ${index.device || 'unknown'}`,
     `Pack root: ${index.root || 'unknown'}`,
     `Detected project: ${index.detectedProjectFile || 'none'}`,
-    `Indexed files: ${index.scannedFiles.length}`,
-    `Indexed symbols: ${index.symbolList.length}`,
+    `Indexed files: ${index.scannedFiles?.length ?? 0}`,
+    `Indexed symbols: ${index.symbolList?.length ?? 0}`,
     `Built at: ${builtAtText}`
   ];
   return lines.join('\n');
